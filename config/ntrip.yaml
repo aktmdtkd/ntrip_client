@@ -1,0 +1,7 @@
+caster: ?.?.?.?
+port: ?
+mountpoint: ?
+username: your_id
+password: your_pw
+serial_device: /dev/ttyACM?
+
