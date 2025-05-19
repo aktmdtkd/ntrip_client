@@ -12,19 +12,19 @@ def generate_launch_description():
     "use_https", default_value=TextSubstitution(text="false")
   )
   host_arg = DeclareLaunchArgument(
-    "host", default_value=TextSubstitution(text="rtk2go.com")
+    "host", default_value=TextSubstitution(text="RTS1.ngii.go.kr")
   )
   port_arg = DeclareLaunchArgument(
     "port", default_value=TextSubstitution(text="2101")
   )
   mountpoint_arg = DeclareLaunchArgument(
-    "mountpoint", default_value=TextSubstitution(text="Prittlbach")
+    "mountpoint", default_value=TextSubstitution(text="VRS-RTCM34")
   )
   username_arg = DeclareLaunchArgument(
-    "username", default_value=EnvironmentVariable(name="NTRIP_USERNAME", default_value="noname")
+    "username", default_value=EnvironmentVariable(name="aktmdtkd13", default_value="aktmdtkd13")
   )
   password_arg = DeclareLaunchArgument(
-    "password", default_value=EnvironmentVariable(name="NTRIP_PASSWORD", default_value="password")
+    "password", default_value=EnvironmentVariable(name="ngii", default_value="ngii")
   )
   params = [{
     'use_https': LaunchConfiguration('use_https'),

@@ -15,6 +15,8 @@ find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(rtcm_msgs REQUIRED)
 find_package(libcurl_vendor REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
 
 include_directories(include SYSTEM)
 
@@ -32,6 +34,7 @@ ament_target_dependencies(ntrip_client_components
   std_msgs
   rtcm_msgs
   libcurl_vendor
+  sensor_msgs
 )
 
 rclcpp_components_register_node(ntrip_client_components

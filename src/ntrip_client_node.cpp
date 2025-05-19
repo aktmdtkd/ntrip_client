@@ -13,228 +13,184 @@
 // limitations under the License.
 
 #include <cstdio>
-#include <curl/curl.h>
+#include <asio.hpp>
+#include <thread>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
+#include <mutex>
+
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 #include "rtcm_msgs/msg/message.hpp"
+#include "sensor_msgs/msg/nav_sat_fix.hpp"
 #include "ntrip_client/visibility_control.h"
 
 using namespace std::chrono_literals;
-using std::placeholders::_1;
-using std::placeholders::_2;
-using std::placeholders::_3;
 
 namespace ntrip_client
 {
-struct CurlHandle
-{
-  CURL * handle;
-  CurlHandle()
-  : handle(curl_easy_init()) {}
-  ~CurlHandle() {curl_easy_cleanup(handle);}
-};
-
 class NTRIPClientNode : public rclcpp::Node
 {
 public:
   NTRIP_CLIENT_NODE_PUBLIC
   explicit NTRIPClientNode(const rclcpp::NodeOptions & options)
-  : Node("ntrip_client",
-      rclcpp::NodeOptions(options)),
-    curlHandle_(std::make_shared<CurlHandle>())
+  : Node("ntrip_client", options),
+    io_context_(), socket_(io_context_)
   {
-    RCLCPP_INFO(this->get_logger(), "starting %s", get_name());
+    RCLCPP_INFO(this->get_logger(), "starting ntrip_client");
 
-    declare_parameter("use_https", false);
-    declare_parameter("host", "rtk2go.com");
+    declare_parameter("host", "RTS1.ngii.go.kr");
     declare_parameter("port", 2101);
-    declare_parameter("mountpoint", "Prittlebach");
-    declare_parameter("username", "noname");
-    declare_parameter("password", "password");
+    declare_parameter("mountpoint", "VRS-RTCM34");
+    declare_parameter("username", "aktmdtkd13");
+    declare_parameter("password", "ngii");
 
-    use_https_ = get_parameter("use_https").as_bool();
     host_ = get_parameter("host").as_string();
     port_ = get_parameter("port").as_int();
     mountpoint_ = get_parameter("mountpoint").as_string();
     username_ = get_parameter("username").as_string();
     password_ = get_parameter("password").as_string();
 
-    std::string url = ConnectionUrl();
-
-    RCLCPP_INFO(this->get_logger(), "ntrip connection url: '%s'", url.c_str());
-
-    std::string userpwd = username_ + ":" + password_;
-    RCLCPP_DEBUG(this->get_logger(), "userpwd: '%s'", userpwd.c_str());
-
-    // Create the publisher for rtcm_msgs::msg::Message
     rtcm_pub_ = this->create_publisher<rtcm_msgs::msg::Message>("/rtcm", 10);
+    fix_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
+      "/ublox_gps_node/fix", 10,
+      std::bind(&NTRIPClientNode::fixCallback, this, std::placeholders::_1));
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    streaming_thread_ = std::thread(&NTRIPClientNode::streamRTCM, this);
+  }
 
-    // Set the desired record count - libcurl will keep reading from the ntrip castor indefinitly
-    // this is used to force it to exit in WriteCallback. In DoStreaming it will check to see if
-    // streaing_exit_ is true, such that the ros2 node can terminate cleanly
-    int desiredCount = 10;
-
-    auto handle = curlHandle_->handle;
-    if (handle) {
-      curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
-      curl_easy_setopt(handle, CURLOPT_HTTP09_ALLOWED, true);
-      curl_easy_setopt(handle, CURLOPT_USERPWD, userpwd.c_str());
-      // curl_easy_setopt(handle, CURLOPT_NOPROGRESS, 0L);
-      // curl_easy_setopt(handle, CURLOPT_VERBOSE, 1L);
-      curl_easy_setopt(handle, CURLOPT_USERAGENT, "NTRIP ros2/ublox_dgnss");
-      curl_easy_setopt(handle, CURLOPT_FAILONERROR, true);
-      curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, &NTRIPClientNode::WriteCallback);
-      curl_easy_setopt(curlHandle_->handle, CURLOPT_WRITEDATA, this);
-      curl_easy_setopt(
-        curlHandle_->handle, CURLOPT_PRIVATE,
-        reinterpret_cast<void *>(desiredCount));
-
-      // Start the streaming in a separate thread
-      streaming_exit_ = false;
-      streamingThread_ = std::thread(&NTRIPClientNode::DoStreaming, this);
+  ~NTRIPClientNode()
+  {
+    io_context_.stop();
+    if (streaming_thread_.joinable()) {
+      streaming_thread_.join();
     }
   }
 
 private:
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_callback_handle_;
-  std::shared_ptr<CurlHandle> curlHandle_;
-  std::thread streamingThread_;
-
-  bool streaming_exit_;
-  bool desired_count_reached_;
-
-  // NTRIP castor connection
-  bool use_https_;
-  std::string host_;
+  std::string host_, mountpoint_, username_, password_;
   int port_;
-  std::string mountpoint_;
-  std::string username_;
-  std::string password_;
+  asio::io_context io_context_;
+  asio::ip::tcp::socket socket_;
+  std::thread streaming_thread_;
+
+  std::mutex fix_mutex_;
+  sensor_msgs::msg::NavSatFix::SharedPtr latest_fix_;
 
   rclcpp::Publisher<rtcm_msgs::msg::Message>::SharedPtr rtcm_pub_;
+  rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr fix_sub_;
 
-  std::string ConnectionUrl()
+  void fixCallback(const sensor_msgs::msg::NavSatFix::SharedPtr msg)
   {
-    std::string url;
-    if (use_https_) {
-      url = "https://" + host_ + ":" + std::to_string(port_) + "/" + mountpoint_;
-    } else {
-      url = "http://" + host_ + ":" + std::to_string(port_) + "/" + mountpoint_;
-    }
-
-    return url;
+    std::lock_guard<std::mutex> lock(fix_mutex_);
+    latest_fix_ = msg;
   }
 
-  static size_t WriteCallback(char * ptr, size_t size, size_t nmemb, void * userdata)
+  std::string generateGGA()
   {
-    NTRIPClientNode * node = reinterpret_cast<NTRIPClientNode *>(userdata);
+    std::lock_guard<std::mutex> lock(fix_mutex_);
+    if (!latest_fix_) return "";
 
-    // code doesnt work in Humble
-    // if (node->get_logger().get_effective_level() == rclcpp::Logger::Level::Debug) {
-    // Convert the received data to a hexadecimal string
-    std::stringstream hexStream;
-    hexStream << std::hex << std::setfill('0');
-    for (size_t i = 0; i < size * nmemb; i++) {
-      hexStream << std::setw(2) << static_cast<int>(ptr[i]);
+    const auto & fix = *latest_fix_;
+    std::time_t t = std::time(nullptr);
+    std::tm * now = std::gmtime(&t);
+    char time_str[16];
+    std::strftime(time_str, sizeof(time_str), "%H%M%S", now);
+
+    char lat_dir = fix.latitude >= 0 ? 'N' : 'S';
+    double lat_deg = std::abs(fix.latitude);
+    int lat_deg_int = static_cast<int>(lat_deg);
+    double lat_min = (lat_deg - lat_deg_int) * 60.0;
+
+    char lon_dir = fix.longitude >= 0 ? 'E' : 'W';
+    double lon_deg = std::abs(fix.longitude);
+    int lon_deg_int = static_cast<int>(lon_deg);
+    double lon_min = (lon_deg - lon_deg_int) * 60.0;
+
+    std::ostringstream ss;
+    ss << "$GPGGA," << time_str << ","
+       << std::setw(2) << std::setfill('0') << lat_deg_int
+       << std::fixed << std::setprecision(4) << lat_min << "," << lat_dir << ","
+       << std::setw(3) << std::setfill('0') << lon_deg_int
+       << std::fixed << std::setprecision(4) << lon_min << "," << lon_dir
+       << ",1,12,1.0," << std::fixed << std::setprecision(1) << fix.altitude
+       << ",M,0.0,M,,";
+
+    std::string sentence = ss.str();
+    unsigned char checksum = 0;
+    for (size_t i = 1; i < sentence.size(); ++i) {
+      checksum ^= sentence[i];
     }
-    std::string hexString = hexStream.str();
+    char checksum_str[5];
+    std::snprintf(checksum_str, sizeof(checksum_str), "*%02X", checksum);
+    sentence += checksum_str;
+    sentence += "\r\n";
 
-    // Log the hexadecimal string as a debug message
-    RCLCPP_DEBUG(
-      node->get_logger(), "Received size: %ld nmemb: %ld data: %s", size, nmemb,
-      hexString.c_str());
-    // }
-
-    // Create an instance of the message and populate
-    auto message = std::make_unique<rtcm_msgs::msg::Message>();
-    message->header.stamp = node->get_clock()->now();
-    message->header.frame_id = node->mountpoint_;
-
-    // Set the data from the char* ptr
-    message->message.assign(ptr, ptr + size * nmemb);
-
-    // Publish the message
-    node->rtcm_pub_->publish(std::move(message));
-
-    // Keep track of the number of records received
-    static int recordCount = 0;
-    recordCount++;
-
-    // Get the desired count from the private parameter
-    int desiredCount;
-    curl_easy_getinfo(node->curlHandle_->handle, CURLINFO_PRIVATE, &desiredCount);
-
-
-    // Check if the desired count is reached
-    if (recordCount >= desiredCount) {
-      recordCount = 0;
-
-      node->desired_count_reached_ = true;
-
-      // Returning a value different from the received data size
-      // will signal libcurl to stop receiving further data
-      return size * nmemb - 1;
-    }
-
-    // Returning the actual received data size will continue the stream
-    return size * nmemb;
+    return sentence;
   }
 
-  void DoStreaming()
+  void streamRTCM()
   {
-    while (!streaming_exit_) {
-      desired_count_reached_ = false;
+    while (!latest_fix_ && rclcpp::ok()) {
+      rclcpp::sleep_for(500ms);
+    }
+    RCLCPP_INFO(this->get_logger(), "Received GPS fix. Starting NTRIP connection.");
 
-      // Perform the request
-      CURLcode res = curl_easy_perform(curlHandle_->handle);
+    asio::ip::tcp::resolver resolver(io_context_);
+    auto endpoints = resolver.resolve(host_, std::to_string(port_));
+    asio::connect(socket_, endpoints);
 
-      // Check for any errors
-      if (res != CURLE_OK) {
+    std::ostringstream request;
+    request << "GET /" << mountpoint_ << " HTTP/1.1\r\n"
+            << "Host: " << host_ << ":" << port_ << "\r\n"
+            << "Ntrip-Version: Ntrip/2.0\r\n"
+            << "User-Agent: NTRIP ROS2 Client\r\n"
+            << "Authorization: Basic " << base64Encode(username_ + ":" + password_) << "\r\n"
+            << "Connection: close\r\n\r\n";
 
-        if (desired_count_reached_) {
-          RCLCPP_DEBUG(this->get_logger(), "Processed desired count... ");
-          // Sleep for 100 mili seconds
-          rclcpp::sleep_for(std::chrono::milliseconds(100));
-        } else {
+    std::string gga = generateGGA();
 
-          // Retrieve and log the effective URL
-          char * effectiveUrl;
-          curl_easy_getinfo(curlHandle_->handle, CURLINFO_EFFECTIVE_URL, &effectiveUrl);
-          RCLCPP_ERROR(
-            this->get_logger(), "Failed to perform streaming request for URL: %s", effectiveUrl);
+    socket_.send(asio::buffer(request.str()));
+    std::this_thread::sleep_for(500ms);
+    socket_.send(asio::buffer(gga));
 
-          // Retrieve and log the response code
-          long responseCode;
-          curl_easy_getinfo(curlHandle_->handle, CURLINFO_RESPONSE_CODE, &responseCode);
-          RCLCPP_ERROR(this->get_logger(), "Response code: %ld", responseCode);
+    std::vector<char> buffer(4096);
+    while (rclcpp::ok()) {
+      std::error_code ec;
+      size_t len = socket_.read_some(asio::buffer(buffer), ec);
+      if (ec) break;
+      auto message = std::make_unique<rtcm_msgs::msg::Message>();
+      message->header.stamp = this->now();
+      message->header.frame_id = mountpoint_;
+      message->message.assign(buffer.begin(), buffer.begin() + len);
+      rtcm_pub_->publish(std::move(message));
+    }
+  }
 
-          // Handle the error
-          RCLCPP_ERROR(
-            this->get_logger(), "Failed to perform streaming request: %s", curl_easy_strerror(res));
-
-          // Sleep for 1 second
-          rclcpp::sleep_for(std::chrono::seconds(1));
-        }
+  std::string base64Encode(const std::string & input)
+  {
+    static const std::string chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string result;
+    int val = 0, valb = -6;
+    for (uint8_t c : input) {
+      val = (val << 8) + c;
+      valb += 8;
+      while (valb >= 0) {
+        result.push_back(chars[(val >> valb) & 0x3F]);
+        valb -= 6;
       }
     }
-  }
-
-public:
-  NTRIP_CLIENT_NODE_LOCAL
-  ~NTRIPClientNode()
-  {
-    streaming_exit_ = true;
-
-    // Wait for the streaming thread to finish
-    streamingThread_.join();
-
-    curlHandle_.reset();
-    curl_global_cleanup();
-    RCLCPP_INFO(this->get_logger(), "finished");
+    if (valb > -6) result.push_back(chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    while (result.size() % 4) result.push_back('=');
+    return result;
   }
 };
+
 }  // namespace ntrip_client
 
 RCLCPP_COMPONENTS_REGISTER_NODE(ntrip_client::NTRIPClientNode)
