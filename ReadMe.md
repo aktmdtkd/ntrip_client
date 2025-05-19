@@ -1,3 +1,40 @@
+# Masik Part
+본 레포지토리는 GPS에 NTRIP를 연결하는 도구와 그 방법을 설명합니다.
+아래 링크와 밀접한 관계가 있습니다.
+[aktmdtkd/ublox_F9R](https://github.com/aktmdtkd/ublox_F9R)
+
+여기서 본래 config 파일이 없는데, 추가해서 그 안에 'ntrip.yaml'파일을 만들어야 합니다.
+
+```
+caster: ?
+port: ?
+mountpoint: ?
+username: ?
+password: ?
+serial_device: /dev/ttyACM?
+```
+
+이런식으로 적혀있을 건데, 여기서 serial_device가 중요합니다.
+GPS를 연결하지 않았다가 연결하면 몇개의 ttyACM이 생기는지 보셔야 합니다.
+
+그렇게 생기는 것이 2개라면, 하나는 위의 ublox_F9R에서 사용하시고, 다른 하나를 ntrip에 연결해야 합니다.
+
+**둘을 같은 포트로 사용하시면 충돌납니다.**
+
+만약 어떻게 연결되는지 모른다 싶으시면
+
+```ls /dev/ttyACM*```
+
+이 명령어를 치시면 됩니다.
+
+GPS를 연결하기 전에 쳐보시고, GPS를 연결한 후에 쳐보시면 어느 곳에 연결이 되는지 알 수 있습니다.
+
+제 경우엔 /dev/ttyACM1과 /dev/ttyACM2였습니다.
+
+한국인의 경우에는 [국토지리정보원](https://www.ngii.go.kr/kor/main.do?)에 가셔서 가입하고 RTK 신청해야 합니다. 아이디 만드시면 비번은 무조건 ngii일거에요. 그외 정보는 그곳에서 전부 제공할겁니다.
+
+---
+
 # NTRIP Client
 
 ROS 2 package for publishing RTCM correction data from an NTRIP server.
