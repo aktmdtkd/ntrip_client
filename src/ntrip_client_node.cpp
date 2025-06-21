@@ -43,11 +43,11 @@ public:
   {
     RCLCPP_INFO(this->get_logger(), "starting ntrip_client");
 
-    declare_parameter("host", "RTS1.ngii.go.kr");
-    declare_parameter("port", 2101);
-    declare_parameter("mountpoint", "VRS-RTCM34");
-    declare_parameter("username", "aktmdtkd13");
-    declare_parameter("password", "ngii");
+    declare_parameter("host", "");
+    declare_parameter("port",);
+    declare_parameter("mountpoint", "");
+    declare_parameter("username", "");
+    declare_parameter("password", "");
 
     host_ = get_parameter("host").as_string();
     port_ = get_parameter("port").as_int();

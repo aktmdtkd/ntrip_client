@@ -9,22 +9,22 @@ from launch_ros.descriptions import ComposableNode
 
 def generate_launch_description():
   use_https_arg = DeclareLaunchArgument(
-    "use_https", default_value=TextSubstitution(text="false")
+    "use_https", default_value=TextSubstitution(text="")
   )
   host_arg = DeclareLaunchArgument(
-    "host", default_value=TextSubstitution(text="RTS1.ngii.go.kr")
+    "host", default_value=TextSubstitution(text="")
   )
   port_arg = DeclareLaunchArgument(
-    "port", default_value=TextSubstitution(text="2101")
+    "port", default_value=TextSubstitution(text="")
   )
   mountpoint_arg = DeclareLaunchArgument(
-    "mountpoint", default_value=TextSubstitution(text="VRS-RTCM34")
+    "mountpoint", default_value=TextSubstitution(text="")
   )
   username_arg = DeclareLaunchArgument(
-    "username", default_value=EnvironmentVariable(name="aktmdtkd13", default_value="aktmdtkd13")
+    "username", default_value=EnvironmentVariable(name="", default_value="")
   )
   password_arg = DeclareLaunchArgument(
-    "password", default_value=EnvironmentVariable(name="ngii", default_value="ngii")
+    "password", default_value=EnvironmentVariable(name="", default_value="")
   )
   params = [{
     'use_https': LaunchConfiguration('use_https'),
